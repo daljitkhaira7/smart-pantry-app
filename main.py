@@ -3,84 +3,72 @@ import streamlit.components.v1 as components
 import requests
 import urllib.parse
 
-# --- Layout ---
-st.set_page_config(page_title="Auto-Pantry", layout="wide")
+st.set_page_config(page_title="Pantry Genius", layout="wide")
 
 if 'inventory' not in st.session_state: st.session_state.inventory = {}
 
-# --- Custom UI ---
+st.title("🥘 Smart Pantry Auto-Scanner")
+
+# --- CSS for UI ---
 st.markdown("""
     <style>
-    .stApp { background-color: #f4f7f6; }
-    .scan-container { border: 2px solid #4CAF50; border-radius: 15px; padding: 10px; background: white; }
+    .stApp { background-color: #f8f9fa; }
+    iframe { border-radius: 15px; border: 2px solid #4CAF50; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🥘 Smart Pantry: Auto-Scan")
+# --- Scanner Section ---
+st.subheader("📷 Scan Barcode Below")
 
-# --- Language Settings ---
-lang = st.sidebar.selectbox("Language", ["English", "Punjabi", "Hindi"])
+# JavaScript with Auto-Focus and Faster FPS
+scanner_html = """
+<div id="reader" style="width: 100%;"></div>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+    function onScanSuccess(decodedText) {
+        // Send to Streamlit URL as query parameter
+        const url = new URL(window.location.href);
+        url.searchParams.set('scanned', decodedText);
+        window.parent.location.href = url.toString();
+    }
 
-# --- Tab System ---
-tab1, tab2, tab3 = st.tabs(["📷 Auto-Scanner", "📊 My Stock", "🛒 Shopping List"])
+    let config = { fps: 20, qrbox: {width: 280, height: 180}, rememberLastUsedCamera: true };
+    let html5QrcodeScanner = new html5QrcodeScanner("reader", config);
+    html5QrcodeScanner.render(onScanSuccess);
+</script>
+"""
 
-with tab1:
-    st.subheader("Place Barcode in front of Camera")
+# HTML component height increase for better visibility
+components.html(scanner_html, height=500)
+
+# Catch the scanned value from URL
+query_params = st.query_params
+if "scanned" in query_params:
+    barcode = query_params["scanned"]
     
-    # JavaScript Auto-Scanner Component
-    scanner_html = """
-    <div id="reader" style="width: 100%; border-radius: 10px; overflow: hidden;"></div>
-    <script src="https://unpkg.com/html5-qrcode"></script>
-    <script>
-        function onScanSuccess(decodedText, decodedResult) {
-            // Send the scanned code back to Streamlit
-            window.parent.postMessage({
-                type: 'streamlit:setComponentValue',
-                value: decodedText
-            }, '*');
-        }
-
-        let html5QrcodeScanner = new Html5QrcodeScanner(
-            "reader", { fps: 10, qrbox: {width: 250, height: 150} }
-        );
-        html5QrcodeScanner.render(onScanSuccess);
-    </script>
-    """
+    # Process only if not already processed in this session
+    res = requests.get(f"https://world.openfoodfacts.org/api/v2/product/{barcode}.json")
+    name = res.json().get('product', {}).get('product_name', f"Item {barcode}") if res.status_code == 200 else f"Item {barcode}"
     
-    # HTML Component to catch the barcode
-    scanned_code = components.html(scanner_html, height=450)
-
-    # Logic to handle scanned code
-    # Note: Scanned code logic runs when the JS sends a value
-    query_params = st.query_params
-    last_scanned = st.session_state.get('last_scanned', "")
-
-    # Check if a new scan happened (Using a button to process for now as Streamlit updates)
-    scanned_barcode = st.text_input("Last Scanned Barcode (Auto-filled)", key="barcode_input")
+    st.session_state.inventory[barcode] = st.session_state.inventory.get(barcode, {"name": name, "qty": 0})
+    st.session_state.inventory[barcode]['qty'] += 1
     
-    if scanned_barcode and scanned_barcode != last_scanned:
-        res = requests.get(f"https://world.openfoodfacts.org/api/v2/product/{scanned_barcode}.json")
-        name = res.json().get('product', {}).get('product_name', f"Item {scanned_barcode}") if res.status_code == 200 else f"Item {scanned_barcode}"
-        
-        st.session_state.inventory[scanned_barcode] = st.session_state.inventory.get(scanned_barcode, {"name": name, "qty": 0})
-        st.session_state.inventory[scanned_barcode]['qty'] += 1
-        st.session_state.last_scanned = scanned_barcode
-        st.success(f"Added: {name}")
-        st.rerun()
+    st.success(f"✅ Added: {name}")
+    # Clear URL to prevent infinite loop
+    st.query_params.clear()
+    st.rerun()
 
-with tab2:
-    if not st.session_state.inventory: st.info("Stock is empty")
+# --- Stock Section ---
+st.divider()
+st.subheader("📊 Current Stock")
+if st.session_state.inventory:
     for code, item in list(st.session_state.inventory.items()):
-        c1, c2, c3 = st.columns([3,1,1])
-        c1.write(f"**{item['name']}**")
-        c2.write(f"Qty: {item['qty']}")
-        if c3.button("➖", key=code):
+        col1, col2, col3 = st.columns([3, 1, 1])
+        col1.write(f"**{item['name']}**")
+        col2.write(f"Qty: {item['qty']}")
+        if col3.button("➖", key=code):
             st.session_state.inventory[code]['qty'] -= 1
             if st.session_state.inventory[code]['qty'] <= 0: del st.session_state.inventory[code]
             st.rerun()
-
-with tab3:
-    list_items = [f"- {i['name']} (Qty: {i['qty']})" for i in st.session_state.inventory.values()]
-    if list_items:
-        msg = urllib.parse.quote(f"🛒 *Pantry List:*\n" + "\n".join(list_items))
-        st.markdown(f'<a href="https://wa.me/?text={msg}" target="_blank"><button style="width:100%; padding:10px; background:#25D366; color:white; border:none; border-radius:5px;">Share on WhatsApp</button></a>', unsafe_allow_html=True)
+else:
+    st.info("Pantry khali hai. Barcode scan karein!")
