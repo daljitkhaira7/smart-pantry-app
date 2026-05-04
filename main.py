@@ -1,74 +1,71 @@
 import streamlit as st
-import streamlit.components.v1 as components
+from pyzbar.pyzbar import decode
+from PIL import Image
 import requests
 import urllib.parse
 
-st.set_page_config(page_title="Pantry Genius", layout="wide")
+# --- Modern UI Configuration ---
+st.set_page_config(page_title="Pantry Genius", layout="wide", page_icon="🥘")
 
-if 'inventory' not in st.session_state: st.session_state.inventory = {}
-
-st.title("🥘 Smart Pantry Auto-Scanner")
-
-# --- CSS for UI ---
+# Custom CSS for Modern Look
 st.markdown("""
     <style>
-    .stApp { background-color: #f8f9fa; }
-    iframe { border-radius: 15px; border: 2px solid #4CAF50; }
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 10px; height: 3em; background-color: #4CAF50; color: white; }
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] { background-color: white; border-radius: 10px; padding: 10px 20px; }
     </style>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-# --- Scanner Section ---
-st.subheader("📷 Scan Barcode Below")
+if 'inventory' not in st.session_state: st.session_state.inventory = {}
+if 'lang' not in st.session_state: st.session_state.lang = "English"
 
-# JavaScript with Auto-Focus and Faster FPS
-scanner_html = """
-<div id="reader" style="width: 100%;"></div>
-<script src="https://unpkg.com/html5-qrcode"></script>
-<script>
-    function onScanSuccess(decodedText) {
-        // Send to Streamlit URL as query parameter
-        const url = new URL(window.location.href);
-        url.searchParams.set('scanned', decodedText);
-        window.parent.location.href = url.toString();
-    }
+# --- Sidebar ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    st.session_state.lang = st.selectbox("Language", ["English", "Hindi", "Punjabi"])
+    L = {"English": "Scan", "Hindi": "स्कैन", "Punjabi": "ਸਕੈਨ"}
 
-    let config = { fps: 20, qrbox: {width: 280, height: 180}, rememberLastUsedCamera: true };
-    let html5QrcodeScanner = new html5QrcodeScanner("reader", config);
-    html5QrcodeScanner.render(onScanSuccess);
-</script>
-"""
+st.title("🥘 Pantry Genius")
 
-# HTML component height increase for better visibility
-components.html(scanner_html, height=500)
+tab1, tab2, tab3 = st.tabs(["📷 Scanner", "📊 Stock", "🛒 Share"])
 
-# Catch the scanned value from URL
-query_params = st.query_params
-if "scanned" in query_params:
-    barcode = query_params["scanned"]
+with tab1:
+    st.info("Barcode ki saaf photo kheenchiye")
+    img_file = st.camera_input("Scanner")
     
-    # Process only if not already processed in this session
-    res = requests.get(f"https://world.openfoodfacts.org/api/v2/product/{barcode}.json")
-    name = res.json().get('product', {}).get('product_name', f"Item {barcode}") if res.status_code == 200 else f"Item {barcode}"
-    
-    st.session_state.inventory[barcode] = st.session_state.inventory.get(barcode, {"name": name, "qty": 0})
-    st.session_state.inventory[barcode]['qty'] += 1
-    
-    st.success(f"✅ Added: {name}")
-    # Clear URL to prevent infinite loop
-    st.query_params.clear()
-    st.rerun()
+    if img_file:
+        img = Image.open(img_file)
+        barcodes = decode(img)
+        
+        if barcodes:
+            for b in barcodes:
+                code = b.data.decode('utf-8')
+                # OpenFoodFacts API
+                res = requests.get(f"https://world.openfoodfacts.org/api/v2/product/{code}.json")
+                name = res.json().get('product', {}).get('product_name', f"Item {code}") if res.status_code == 200 else f"Item {code}"
+                
+                if code in st.session_state.inventory:
+                    st.session_state.inventory[code]['qty'] += 1
+                else:
+                    st.session_state.inventory[code] = {"name": name, "qty": 1}
+                st.success(f"Added: {name}")
+        else:
+            st.warning("Barcode detected nahi hua. Light aur focus check karein.")
 
-# --- Stock Section ---
-st.divider()
-st.subheader("📊 Current Stock")
-if st.session_state.inventory:
+with tab2:
+    if not st.session_state.inventory: st.write("Stock is empty.")
     for code, item in list(st.session_state.inventory.items()):
-        col1, col2, col3 = st.columns([3, 1, 1])
-        col1.write(f"**{item['name']}**")
-        col2.write(f"Qty: {item['qty']}")
-        if col3.button("➖", key=code):
+        c1, c2, c3 = st.columns([3,1,1])
+        c1.write(f"**{item['name']}**")
+        c2.write(f"Qty: {item['qty']}")
+        if c3.button("➖", key=code):
             st.session_state.inventory[code]['qty'] -= 1
             if st.session_state.inventory[code]['qty'] <= 0: del st.session_state.inventory[code]
             st.rerun()
-else:
-    st.info("Pantry khali hai. Barcode scan karein!")
+
+with tab3:
+    list_items = [f"- {i['name']} (Qty: {i['qty']})" for i in st.session_state.inventory.values()]
+    if list_items:
+        msg = urllib.parse.quote("🛒 *Shopping List:*\n" + "\n".join(list_items))
+        st.markdown(f'<a href="https://wa.me/?text={msg}" target="_blank"><button style="width:100%; height:50px; border-radius:10px; background-color:#25D366; color:white; border:none; font-weight:bold;">WHATSAPP PAR BHEJEIN</button></a>', unsafe_allow_html=True)
