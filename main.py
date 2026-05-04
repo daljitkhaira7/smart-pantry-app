@@ -4,87 +4,54 @@ from PIL import Image
 import requests
 import urllib.parse
 
-st.set_page_config(page_title="Pantry Genius Pro", layout="wide", page_icon="🥘")
+st.set_page_config(page_title="Pantry Genius", layout="wide")
 
 if 'inventory' not in st.session_state: st.session_state.inventory = {}
 
-st.title("🥘 Smart Pantry: Name & Photo Manager")
+st.title("🥘 Smart Pantry: Scanner Fix")
 
-tab1, tab2, tab3 = st.tabs(["📷 Scan & Add", "📊 My Stock", "🛒 Share"])
+# --- Scanner Tab ---
+img_file = st.camera_input("Scanner (Scan Barcode)")
 
-with tab1:
-    st.info("Barcode scan karein. Agar info nahi aati, toh niche manual add karein.")
-    img_file = st.camera_input("Scanner")
-    
-    if img_file:
+if img_file:
+    try:
         img = Image.open(img_file)
         barcodes = decode(img)
         
         if barcodes:
             for b in barcodes:
                 code = b.data.decode('utf-8')
-                st.write(f"🔍 Searching Barcode: {code}...")
+                st.info(f"Scanning: {code}...")
                 
-                # API Call
+                # API Call for Info
                 try:
                     res = requests.get(f"https://world.openfoodfacts.org/api/v2/product/{code}.json", timeout=5)
                     data = res.json()
-                    if data.get('status') == 1:
-                        p = data['product']
-                        name = p.get('product_name', f"New Item ({code})")
-                        photo = p.get('image_url', None)
-                        st.success(f"Found: {name}")
-                    else:
-                        name = f"Unknown Item ({code})"
-                        photo = None
-                        st.warning("Database mein info nahi mili. Aap naam badal sakte hain.")
+                    name = data['product'].get('product_name', f"Item {code}") if data.get('status') == 1 else f"Item {code}"
+                    photo = data['product'].get('image_url', None) if data.get('status') == 1 else None
                 except:
-                    name = f"Item {code}"
-                    photo = None
-                    st.error("API Connection Error!")
+                    name, photo = f"Item {code}", None
 
-                # Add to State
+                # Update State
                 if code not in st.session_state.inventory:
                     st.session_state.inventory[code] = {"name": name, "qty": 1, "photo": photo}
                 else:
                     st.session_state.inventory[code]['qty'] += 1
-                st.rerun()
+                st.success(f"Added: {name}")
         else:
-            st.error("Barcode detected nahi hua. Light check karein!")
+            st.warning("⚠️ Barcode nahi mila. Light mein dobara try karein.")
+    except Exception as e:
+        st.error(f"Scanner Error: {e}")
+        st.info("Check if packages.txt has 'libzbar0' and requirements.txt has 'pyzbar'")
 
-with tab2:
-    st.subheader("Manage Inventory")
-    if not st.session_state.inventory:
-        st.write("Abhi koi item nahi hai.")
-    else:
-        for code, item in list(st.session_state.inventory.items()):
-            with st.expander(f"📦 {item['name']} (Qty: {item['qty']})", expanded=True):
-                c1, c2 = st.columns([1, 3])
-                
-                # Photo Management
-                with c1:
-                    if item['photo']:
-                        st.image(item['photo'], width=120)
-                    else:
-                        new_photo = st.file_uploader("Add Photo", type=['jpg', 'png'], key=f"pic_{code}")
-                        if new_photo:
-                            st.session_state.inventory[code]['photo'] = new_photo
-                            st.rerun()
-
-                # Name & Qty Management
-                with c2:
-                    # Manual Name Edit
-                    updated_name = st.text_input("Product Name", value=item['name'], key=f"nm_{code}")
-                    st.session_state.inventory[code]['name'] = updated_name
-                    
-                    col_a, col_b = st.columns(2)
-                    col_a.write(f"**Barcode:** {code}")
-                    if col_b.button("Delete Item", key=f"del_{code}"):
-                        del st.session_state.inventory[code]
-                        st.rerun()
-
-with tab3:
-    list_items = [f"- {i['name']} (Qty: {i['qty']})" for i in st.session_state.inventory.values()]
-    if list_items:
-        msg = urllib.parse.quote("🛒 *Pantry Shopping List:*\n" + "\n".join(list_items))
-        st.markdown(f'<a href="https://wa.me/?text={msg}" target="_blank"><button style="width:100%; padding:10px; background:#25D366; color:white; border:none; border-radius:10px; cursor:pointer;">SHARE ON WHATSAPP</button></a>', unsafe_allow_html=True)
+# --- Inventory Display ---
+st.divider()
+for code, item in list(st.session_state.inventory.items()):
+    with st.container():
+        c1, c2, c3 = st.columns([1, 3, 1])
+        if item['photo']: c1.image(item['photo'], width=100)
+        item['name'] = c2.text_input("Name", value=item['name'], key=f"n_{code}")
+        c3.write(f"Qty: {item['qty']}")
+        if st.button("Remove", key=f"r_{code}"):
+            del st.session_state.inventory[code]
+            st.rerun()
