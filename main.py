@@ -1,90 +1,86 @@
 import streamlit as st
-from pyzbar.pyzbar import decode
-from PIL import Image
+import streamlit.components.v1 as components
 import requests
 import urllib.parse
 
-# --- Modern UI Configuration ---
-st.set_page_config(page_title="Pantry Genius", layout="wide", page_icon="🥘")
+# --- Layout ---
+st.set_page_config(page_title="Auto-Pantry", layout="wide")
 
-# Custom CSS for Modern Look
+if 'inventory' not in st.session_state: st.session_state.inventory = {}
+
+# --- Custom UI ---
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; border-radius: 10px; height: 3em; background-color: #4CAF50; color: white; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { background-color: white; border-radius: 10px; padding: 10px 20px; }
+    .stApp { background-color: #f4f7f6; }
+    .scan-container { border: 2px solid #4CAF50; border-radius: 15px; padding: 10px; background: white; }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# --- State Management ---
-if 'inventory' not in st.session_state: st.session_state.inventory = {}
-if 'lang' not in st.session_state: st.session_state.lang = "English"
+st.title("🥘 Smart Pantry: Auto-Scan")
 
-# --- Translations ---
-text = {
-    "English": {"title": "🥘 Pantry Genius", "scan": "📷 Scan", "stock": "📊 Stock", "recipe": "👩‍🍳 Recipes", "share": "📲 Share List"},
-    "Hindi": {"title": "🥘 रसोई जीनियस", "scan": "📷 स्कैन", "stock": "📊 स्टॉक", "recipe": "👩‍🍳 रेसिपी", "share": "📲 लिस्ट भेजें"},
-    "Punjabi": {"title": "🥘 ਰਸੋਈ ਜੀਨੀਅਸ", "scan": "📷 ਸਕੈਨ", "stock": "📊 ਸਟਾਕ", "recipe": "👩‍🍳 ਰੈਸਿਪੀ", "share": "📲 ਲਿਸਟ ਭੇਜੋ"}
-}
+# --- Language Settings ---
+lang = st.sidebar.selectbox("Language", ["English", "Punjabi", "Hindi"])
 
-# --- Sidebar (Settings) ---
-with st.sidebar:
-    st.header("⚙️ Settings")
-    st.session_state.lang = st.selectbox("Choose Language", ["English", "Hindi", "Punjabi"])
-    L = text[st.session_state.lang]
+# --- Tab System ---
+tab1, tab2, tab3 = st.tabs(["📷 Auto-Scanner", "📊 My Stock", "🛒 Shopping List"])
 
-st.title(L["title"])
-
-tab1, tab2, tab3, tab4 = st.tabs([L["scan"], L["stock"], L["recipe"], L["share"]])
-
-# --- Tab 1: Scanner ---
 with tab1:
-    img_file = st.camera_input("Scan Barcode")
-    if img_file:
-        img = Image.open(img_file)
-        barcodes = decode(img)
-        if barcodes:
-            for b in barcodes:
-                code = b.data.decode('utf-8')
-                # OpenFoodFacts API for Product Name
-                res = requests.get(f"https://world.openfoodfacts.org/api/v2/product/{code}.json")
-                name = res.json().get('product', {}).get('product_name', f"Item {code}") if res.status_code == 200 else f"Item {code}"
-                st.session_state.inventory[code] = st.session_state.inventory.get(code, {"name": name, "qty": 0})
-                st.session_state.inventory[code]['qty'] += 1
-                st.success(f"Added: {name}")
+    st.subheader("Place Barcode in front of Camera")
+    
+    # JavaScript Auto-Scanner Component
+    scanner_html = """
+    <div id="reader" style="width: 100%; border-radius: 10px; overflow: hidden;"></div>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script>
+        function onScanSuccess(decodedText, decodedResult) {
+            // Send the scanned code back to Streamlit
+            window.parent.postMessage({
+                type: 'streamlit:setComponentValue',
+                value: decodedText
+            }, '*');
+        }
 
-# --- Tab 2: Stock Management ---
+        let html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", { fps: 10, qrbox: {width: 250, height: 150} }
+        );
+        html5QrcodeScanner.render(onScanSuccess);
+    </script>
+    """
+    
+    # HTML Component to catch the barcode
+    scanned_code = components.html(scanner_html, height=450)
+
+    # Logic to handle scanned code
+    # Note: Scanned code logic runs when the JS sends a value
+    query_params = st.query_params
+    last_scanned = st.session_state.get('last_scanned', "")
+
+    # Check if a new scan happened (Using a button to process for now as Streamlit updates)
+    scanned_barcode = st.text_input("Last Scanned Barcode (Auto-filled)", key="barcode_input")
+    
+    if scanned_barcode and scanned_barcode != last_scanned:
+        res = requests.get(f"https://world.openfoodfacts.org/api/v2/product/{scanned_barcode}.json")
+        name = res.json().get('product', {}).get('product_name', f"Item {scanned_barcode}") if res.status_code == 200 else f"Item {scanned_barcode}"
+        
+        st.session_state.inventory[scanned_barcode] = st.session_state.inventory.get(scanned_barcode, {"name": name, "qty": 0})
+        st.session_state.inventory[scanned_barcode]['qty'] += 1
+        st.session_state.last_scanned = scanned_barcode
+        st.success(f"Added: {name}")
+        st.rerun()
+
 with tab2:
-    if not st.session_state.inventory: st.info("Inventory is empty!")
-    for code, details in list(st.session_state.inventory.items()):
+    if not st.session_state.inventory: st.info("Stock is empty")
+    for code, item in list(st.session_state.inventory.items()):
         c1, c2, c3 = st.columns([3,1,1])
-        c1.write(f"**{details['name']}**")
-        c2.write(f"Qty: {details['qty']}")
+        c1.write(f"**{item['name']}**")
+        c2.write(f"Qty: {item['qty']}")
         if c3.button("➖", key=code):
             st.session_state.inventory[code]['qty'] -= 1
             if st.session_state.inventory[code]['qty'] <= 0: del st.session_state.inventory[code]
             st.rerun()
 
-# --- Tab 3: AI Recipe Suggestions ---
 with tab3:
-    if st.session_state.inventory:
-        items = [d['name'] for d in st.session_state.inventory.values()]
-        st.subheader("What can you cook?")
-        # Using a simple prompt logic for recipes
-        if st.button("Generate Recipes"):
-            st.write(f"Based on {', '.join(items[:3])}, you can make:")
-            st.info("1. Classic Stir-fry\n2. Quick Pantry Soup\n3. Loaded Sandwiches")
-    else:
-        st.warning("Please add items to stock first.")
-
-# --- Tab 4: WhatsApp Sharing ---
-with tab4:
-    low_stock = [f"{d['name']} (Qty: {d['qty']})" for d in st.session_state.inventory.values()]
-    if low_stock:
-        msg = urllib.parse.quote("🛒 *Shopping List from Pantry Genius:*\n" + "\n".join(low_stock))
-        st.markdown(f'''<a href="https://wa.me/?text={msg}" target="_blank">
-            <button style="width:100%; height:50px; border-radius:10px; background-color:#25D366; color:white; border:none; font-weight:bold;">
-            SEND TO WHATSAPP</button></a>''', unsafe_allow_html=True)
-    else:
-        st.write("Nothing to buy!")
+    list_items = [f"- {i['name']} (Qty: {i['qty']})" for i in st.session_state.inventory.values()]
+    if list_items:
+        msg = urllib.parse.quote(f"🛒 *Pantry List:*\n" + "\n".join(list_items))
+        st.markdown(f'<a href="https://wa.me/?text={msg}" target="_blank"><button style="width:100%; padding:10px; background:#25D366; color:white; border:none; border-radius:5px;">Share on WhatsApp</button></a>', unsafe_allow_html=True)
